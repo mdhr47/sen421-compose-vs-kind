@@ -1,0 +1,4 @@
+CONTAINER ID   NAME                   CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O        PIDS
+fcf72e69105e   sen421-worker          12.86%    175.8MiB / 7.564GiB   2.27%     31.9MB / 1.68MB   393kB / 290MB    126
+fb874813d537   sen421-worker2         5.40%     154.4MiB / 7.564GiB   1.99%     33.1MB / 1.6MB    24.6kB / 281MB   103
+2d61983e1ecb   sen421-control-plane   43.13%    633.8MiB / 7.564GiB   8.18%     1.23MB / 5.11MB   1.13MB / 695MB   306

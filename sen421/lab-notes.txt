@@ -1,0 +1,180 @@
+SEN421 Lab Notes
+Topic 8 — Kubernetes on kind versus Docker Compose
+
+22 Nov 2026 — Setup and first experiments
+
+I ran nginx on my Windows laptop using Docker Compose on port 8080 and a local Kubernetes cluster on port 8081. The cluster had one control-plane node and two worker nodes. Both setups served the same nginx image.
+
+I tested what happened when I stopped nginx inside its container. I also tested what happened when Compose recreated the container and Kubernetes restarted the deployment. These were restarts using the same image. I saved the probe results as CSV files.
+
+Files: docker-compose.yml, kind-config.yaml, web.yaml, web-tuned.yaml, environment.txt, and the original crash and update CSVs.
+
+23 Nov 2026 — Checking whether the comparison was fair
+
+I found that my original probe checked Compose about every 0.114 s and Kubernetes about every 0.625 s. A short outage was easier to miss on Kubernetes, so I kept those files as preliminary results.
+
+I tested both addresses with Python on port 8081. All ten requests succeeded. The median request took 523.1 ms using localhost and 9.3 ms using 127.0.0.1. The old script waited another 100 ms after each request, which explains the roughly 625 ms gap I observed.
+
+I switched both probes to 127.0.0.1 and checked the timing before repeating the crash test. Both platforms answered 30 out of 30 requests. The median gap between checks was 100.5 ms for Compose and 100.4 ms for Kubernetes.
+
+23 Nov 2026 — Corrected crash tests
+
+I stopped nginx with nginx -s stop. I measured the time from the start of the first failed request to the completion of the next successful response. Each trial saved its own CSV.
+
+Platform     Trial    Failed requests    Observed recovery (s)
+Compose        1             6                   0.607
+Compose        2             7                   0.728
+Compose        3             7                   0.705
+Compose        4             7                   0.704
+Compose        5             6                   0.606
+Kubernetes     1             4                   0.414
+
+Across five Compose trials, the mean was 0.670 s and the sample standard deviation was 0.059 s. After Kubernetes trial 1, the pod showed READY 1/1 and RESTARTS 1. I have only one completed Kubernetes trial, so I cannot yet conclude which platform recovered faster.
+
+Evidence: the five compose_crash_20261123_*.csv files and k8s_crash_20261123_145743_527818.csv.
+
+23 Nov 2026 — Kubernetes trial 2 stopped before the crash
+
+I started a fresh pod. Kubernetes reported that the rollout had completed, but all three baseline requests from Windows timed out. The script stopped before sending the crash command. I then tried five separate requests to 127.0.0.1:8081, and all five timed out. I excluded this attempt from the recovery results because no crash was triggered.
+
+Next check: test whether nginx answers from inside the container. The cause of the Windows request timeouts is still unknown.
+
+23 Nov, 15:29 Istanbul — I tested nginx from inside the Kubernetes container.
+It returned HTTP 200 OK and sent all 896 bytes. Earlier, five requests from
+Windows to port 8081 had timed out. The internal check confirms nginx was
+serving at 15:29. I still need to check how the Service routes requests.
+Evidence: k8s_trial2_internal_check.txt
+
+23 Nov — I compared the nginx pod IP with the endpoint listed for the web
+Service. Both showed 10.244.3.3, and the endpoint port was 80. The pod was
+Ready with zero restarts. Evidence: k8s_trial2_routing_check.txt
+
+23 Nov — I rechecked both routes. Windows port 8081 returned HTTP 200 in
+9.2 ms, and NodePort 30080 returned HTTP 200 in 3.0 ms. Both routes were
+responding when tested. The cause of the earlier timeouts remains unknown.
+Evidence: k8s_trial2_nodeport_retry.txt
+
+23 Nov — Kubernetes crash trial 2 (retry). The baseline passed and the
+crash command succeeded. I observed 15 failed probes and a recovery
+interval of 1.510 s. Afterward, the pod was Running, 1/1 Ready, with
+1 restart. Evidence: k8s_crash_20261123_153632_637035.csv.
+
+23 Nov — Kubernetes crash trial 3. The baseline passed and the crash
+command succeeded. I observed 15 failed probes. From the start of the
+first failed request to the completion of the next successful response,
+1.927 s elapsed. The pod returned to 1/1 Ready and showed 1 restart.
+Evidence: k8s_crash_20261123_153919_809697.csv and k8s_trial3_console.txt.
+
+23 Nov — Kubernetes crash trial 4. The crash command succeeded. I observed
+21 failed probes and a recovery interval of 2.109 s. After the test, the
+pod was 1/1 Ready with 1 restart.
+Evidence: k8s_crash_20261123_154336_377342.csv
+Console: k8s_trial4_20261123_154333_732_console.txt
+
+23 Nov — Kubernetes trial 5, first attempt. The rollout completed and one Windows request succeeded, but all three Python baseline requests timed out. No crash was triggered. I kept the console log and excluded this attempt from the recovery average.
+
+23 Nov — Kubernetes trial 5 retry. All three baseline requests timed out
+again. The pod showed 1/1 Ready and 0 restarts. No crash was triggered
+on either attempt, so trial 5 has no recovery measurement. I kept both
+console logs. The cause of the baseline timeouts remains unresolved.
+
+Crash experiment summary: Compose completed 5 trials, with an average
+observed recovery interval of 0.670 s (sample SD 0.059 s). Kubernetes
+completed 4 trials, averaging 1.490 s (sample SD 0.760 s). These values
+measure the time from the start of the first failed request to the
+completion of the next successful response.
+
+23 Nov — Compose redeployment trial 1. I recreated the web container using
+the same nginx image. The command succeeded. I recorded 11 failed probes
+after the trigger and an observed interruption of 1.106 s.
+Evidence: compose_redeploy_20261123_155344_013811.csv
+
+23 Nov — Docker Compose redeployment results. I recreated the web
+container using the same nginx image. All three commands returned exit code 0.
+
+Trial   Failed probes   Observed interruption   Evidence file
+1       11              1.106 s                 compose_redeploy_20261123_155344_013811.csv
+2        9              0.908 s                 compose_redeploy_20261123_155552_935820.csv
+3        9              0.907 s                 compose_redeploy_20261123_155615_360257.csv
+
+Mean ± sample SD: 0.974 ± 0.115 s and 9.67 ± 1.15 failed probes.
+I measured from the start of the first failed request to the completion
+of the next successful response.
+
+23 Nov — Kubernetes baseline redeployment, trial 1. The rolling restart
+command succeeded and the rollout completed. I recorded 85 failed probes
+after the trigger. The first failed probe was followed by a successful
+response after 0.108 s. This value alone does not establish sustained
+recovery. Evidence: k8s_redeploy_20261123_155924_117756.csv
+
+Kubernetes baseline redeployment, trial 1 — CSV check. Of 100 post-trigger
+requests, 15 returned HTTP 200, 1 connection closed without a response,
+and 84 timed out. The final 84 probes all failed. Kubernetes reported
+that the rollout completed, but I could not determine sustained recovery
+time from this recording.
+Evidence: k8s_redeploy_20261123_155924_117756.csv
+
+Kubernetes redeployment trial 1 — Later Windows check. All five requests
+returned HTTP 200 in 8–13 ms. The original recording ended with a timeout,
+so I could not determine the exact recovery time.
+
+Kubernetes redeployment trial 2 — The rollout completed. I recorded 80
+failed probes during the observation window. The first failed request
+was followed by a successful response after 0.113 s.
+Evidence: k8s_redeploy_20261123_160442_001980.csv
+
+Kubernetes redeployment trial 3, first attempt — All three baseline
+requests timed out before the rollout command ran. No redeployment was
+triggered, so this attempt has no redeployment measurement.
+
+23 Nov — Kubernetes redeployment trial 3 (retry). Five consecutive Windows
+checks returned HTTP 200 before the trial. The restart command succeeded.
+After the trigger, 82 probes failed. From the first failure to the end of
+the recording, no probe succeeded. Kubernetes reported rollout completion.
+Evidence: k8s_redeploy_20261123_160837_253211.csv
+
+Across three comparable observation windows, Compose averaged 9.67 failed
+probes per redeployment and baseline Kubernetes averaged 82.33. The exact
+time of sustained recovery for Kubernetes trial 3 is unknown.
+
+I checked the request order in all six CSVs. In every Compose trial,
+requests succeeded again before recording ended. All three baseline
+Kubernetes recordings ended during a sequence of failed requests.
+The exact time of sustained recovery was therefore unknown in all three.
+
+23 Nov — Tuned Kubernetes redeployment. I repeated the same redeployment
+test three times with the tuned configuration. All three rollouts completed.
+The baseline trials had 85, 80, and 82 failed probes. The tuned trials had
+0, 0, and 0. No failures were observed during the three 10-second sampling
+windows. I changed the readiness check and shutdown settings together,
+so these trials cannot tell me which individual setting made the difference.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
